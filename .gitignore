@@ -208,3 +208,5 @@ __marimo__/
 
 # Data files
 examples/**/*.csv
+# LaTeX manual build directory (scripts/build_manual.py)
+docs/manual/.build/

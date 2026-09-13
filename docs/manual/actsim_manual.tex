@@ -108,6 +108,11 @@
 \newcommand{\actsim}{\textsf{ActSim}\xspace}
 \usepackage{xspace}
 
+% \citep is used in the appendix but no bibliography package is loaded and
+% there is no .bib file yet. Fall back to plain \cite so the manual compiles;
+% the key is rendered in brackets until a bibliography is added.
+\providecommand{\citep}[1]{\cite{#1}}
+
 % --- Typesetting tweaks: allow more flexibility for long \texttt{} ---
 \emergencystretch=2em
 \hyphenpenalty=2000
