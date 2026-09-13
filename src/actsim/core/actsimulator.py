@@ -1,6 +1,5 @@
 import pandas as pd
 import numpy as np
-import scipy.stats as stats
 import json
 import logging
 import matplotlib.pyplot as plt
@@ -98,9 +97,9 @@ class StochasticSimulator:
         # Introduce correlation
         correlated_normals = L @ Z
 
-        # Create marginal distribution percentiles
+        # Create marginal distribution percentiles, currently only the frozen class behave the same as scipy distributions
         for i in range(n):
-            random_var.append(stats.norm.cdf(correlated_normals[i,:]))
+            random_var.append(act.normal(0, 1).cdf(correlated_normals[i,:]))
         
         return random_var
     

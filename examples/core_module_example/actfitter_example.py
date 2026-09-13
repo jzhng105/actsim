@@ -11,7 +11,7 @@ from actstats import actuarial as act
 sev_data = act.lognormal(0.5, 0.2).rvs(size=10000)
 
 # Frequency data: Using Poisson distribution with λ=10
-freq_data = act.poisson.rvs(10, 1000)
+freq_data = act.poisson.rvs(10, 10000)
 
 # ---------------------------------------------
 # 2. Load Configuration

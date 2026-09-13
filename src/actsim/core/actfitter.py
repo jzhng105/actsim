@@ -1,10 +1,12 @@
 import numpy as np
-import scipy.stats as stats
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 from functools import wraps
 import pandas as pd
 from actstats import actuarial as act
+from typing import Any, Iterable, Sequence
+from numpy.typing import ArrayLike, NDArray
+
 
 # Decorator to check if a distribution has been selected
 def check_selected_dist(func):
@@ -16,8 +18,8 @@ def check_selected_dist(func):
     return wrapper
 
 class DistributionFitter:
-    def __init__(self, data, distributions=None, metrics=None):
-        self.data = data
+    def __init__(self, data: ArrayLike, distributions: Iterable[str] | None = None, metrics: Sequence[str] | None = None):
+        self.data = self._to_array(data)
         self._length = len(data)
         self.available_distributions = {
             'uniform': act.uniform,
@@ -46,6 +48,31 @@ class DistributionFitter:
         self.statistics = {}
         self.selected_fit = None
     
+    # ------------------------------------------------------------------ helpers
+    @staticmethod
+    def _to_array(data):
+        if isinstance(data, pd.DataFrame):
+            if data.shape[1] != 1:
+                raise ValueError(...)
+            data = data.iloc[:, 0]
+        arr = pd.to_numeric(pd.Series(np.asarray(data).ravel()) if not isinstance(data, pd.Series) else data,
+                            errors="coerce").to_numpy(dtype=float)
+        return arr
+
+    @staticmethod
+    def _frozen(distribution: Any, params: Sequence[float]) -> Any:
+        """Freeze a distribution with its fitted parameters."""
+        return distribution(*params)
+ 
+    @staticmethod
+    def _is_discrete(frozen: Any) -> bool:
+        return hasattr(frozen, "pmf")
+ 
+    @classmethod
+    def _density(cls, frozen: Any, x: ArrayLike) -> NDArray[np.float64]:
+        """pmf for discrete distributions, pdf otherwise."""
+        return np.asarray(frozen.pmf(x) if cls._is_discrete(frozen) else frozen.pdf(x), dtype=float)
+
     def truncate_data(self, remove_values=None, lower=None, upper=None, q_low=None, q_high=None, dropna=True, inplace=True):
         """
         Truncate / clean data before distribution fitting.
@@ -72,23 +99,7 @@ class DistributionFitter:
         data or self
             Returns self if inplace=True, otherwise returns truncated data.
         """
-        data = self.data.copy() if hasattr(self.data, "copy") else np.array(self.data)
-
-        # Convert to pandas Series for univariate distribution fitting
-        if isinstance(data, pd.DataFrame):
-            if data.shape[1] != 1:
-                raise ValueError(
-                    "Distribution fitting expects univariate data. "
-                    "Please pass a Series, array, list, or one-column DataFrame."
-                )
-            s = data.iloc[:, 0].copy()
-        elif isinstance(data, pd.Series):
-            s = data.copy()
-        else:
-            s = pd.Series(np.asarray(data).ravel())
-
-        # Convert to numeric where possible
-        s = pd.to_numeric(s, errors="coerce")
+        s = pd.Series(self.data)
 
         mask = pd.Series(True, index=s.index)
 
@@ -269,44 +280,63 @@ class DistributionFitter:
         return pd.DataFrame(self.results)
     
     @staticmethod
-    def compute_log_likelihood(distribution, params, data):
+    def _prepare(distribution: Any, params: Sequence[float], data: ArrayLike) -> tuple[Any, NDArray[np.float64]]:
+        x = np.asarray(data, dtype=float).ravel()
+        x = x[np.isfinite(x)]
+        if x.size == 0:
+            raise ValueError("Data contains no valid value.")
+        return distribution(*params), x
+    
+    @classmethod
+    def compute_log_likelihood(cls, distribution: Any, params: Sequence[float], data: ArrayLike) -> float:
+        frozen, x = cls._prepare(distribution, params, data)
         try:
-            if hasattr(distribution(*params), 'logpmf'):
-                return np.sum(distribution(*params).logpmf(data))
-            else:
-                return np.sum(distribution(*params).logpdf(data))
-        except Exception as e:
-            raise RuntimeError(f"Error computing log-likelihood: {e}")
+            return float(np.sum(frozen.logpmf(x) if cls._is_discrete(frozen) else frozen.logpdf(x)))
+        except (TypeError, AttributeError, FloatingPointError) as e:
+            raise RuntimeError(f"Error computing log-likelihood for {distribution}: {e}") from e
 
     @staticmethod
-    def compute_aic(log_likelihood, num_params):
+    def compute_aic(log_likelihood, num_params) -> float:
         return 2 * num_params - 2 * log_likelihood
 
     @staticmethod
-    def compute_bic(log_likelihood, num_params, n_samples):
+    def compute_bic(log_likelihood, num_params, n_samples) -> float:
         return np.log(n_samples) * num_params - 2 * log_likelihood
     
-    @staticmethod
-    def compute_chi_square(distribution, params, data, bins=10):
-        # Chi-square test with normalization
-        try:
-            expected_freq, _ = np.histogram(data, bins, density=False)
-            observed_sample = distribution(*params).rvs(size=len(data))
-            observed_freq, _ = np.histogram(observed_sample, bins)
+    @classmethod
+    def compute_chi_square(cls, distribution: Any, params: Sequence[float], data: ArrayLike, 
+                           bins: int = 10) -> float:
+        """Chi-Square test"""
+        if bins < 2:
+            raise ValueError("bins must be at least 2.")
+        frozen, x = cls._prepare(distribution, params, data)
+        n = x.size
+        interior = np.asarray(frozen.ppf(np.linspace(0, 1, bins + 1)[1:-1]), dtype=float)
+        edges = np.unique(np.concatenate(([-np.inf], interior[np.isfinite(interior)], [np.inf])))
+        if edges.size < 3:
+            raise ValueError("Fitted distribution does not yield at least two usable bins.")
 
-            # Normalize observed frequencies to match the sum of expected frequencies
-            observed_freq = observed_freq * (expected_freq.sum() / observed_freq.sum())
+        if cls._is_discrete(frozen):
+            # Bins are (edge_i, edge_{i+1}] on integer support: count values <= edge.
+            observed = np.diff(np.searchsorted(np.sort(x), edges, side="right"))
+        else:
+            observed = np.histogram(x, bins=edges)[0]
+        expected = n * np.diff(np.asarray(frozen.cdf(edges), dtype=float))
 
-            # Perform Chi-square test
-            return stats.chisquare(f_obs=observed_freq, f_exp=expected_freq).statistic
-        except Exception as e:
-                raise RuntimeError(f"Error computing chi-square: {e}")
-    ####! Still use stats.kstest for KS statistic, will update later####
-    @staticmethod
-    def compute_ks_statistic(distribution, params, data):
-        try:
-            cdf = distribution(*params).dist.cdf
-            return stats.kstest(data, cdf).statistic
-        except Exception as e:
-            raise RuntimeError(f"Error computing KS statistic: {e}")
+        if not np.all(np.isfinite(expected)) or np.any(expected <= 0):
+            raise ValueError("Fitted distribution produced non-positive expected counts.")
+        return float(np.sum((observed - expected) ** 2 / expected))
+        
+    @classmethod
+    def compute_ks_statistic(cls, distribution: Any, params: Sequence[float], data: ArrayLike) -> float:
+        """two-sided KS statistic"""
+        frozen, x = cls._prepare(distribution, params, data)
+        n = x.size
+        values, counts = np.unique(x, return_counts=True)
+        ecdf_upper = np.cumsum(counts) / n
+        ecdf_lower = ecdf_upper - counts / n
+        cdf = np.asarray(frozen.cdf(values), dtype=float)
+        if not np.all(np.isfinite(cdf)):
+            raise ValueError("Fitted distribution returned invalid CDF values.")
+        return float(max(np.max(ecdf_upper - cdf), np.max(cdf - ecdf_lower)))
 

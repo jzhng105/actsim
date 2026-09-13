@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "actsim"
-version = "0.1.0.3"
+version = "0.1.0.4"
 description = "Of the Actuary, By the Actuary, For the Actuary: A ZNSTARS Python package for actuarial risk modeling and simulation"
 authors = [
     { name = "Juntao Zhang"},
@@ -25,8 +25,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/jzhng105/actsim"
-Documentation = "https://github.com/jzhng105/actsim/docs"
+Homepage = "https://github.com/casact/actsim"
+Documentation = "https://github.com/casact/actsim/docs"
 
 [project.scripts]
 actsim = "actsim.cli:main"
