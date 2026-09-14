@@ -32,6 +32,7 @@ __all__ = [
     "make_server",
     "prompt_decorator",
     "resource_decorator",
+    "run_server",
     "tool_decorator",
 ]
 
@@ -138,3 +139,23 @@ def prompt_decorator(
     """Register a prompt, passing only kwargs the installed SDK accepts."""
     kwargs = _supported(MCPServer.prompt, {"name": name, "description": description})
     return server.prompt(**kwargs)
+
+
+def run_server(server: MCPServer, transport: str, *, host: str, port: int) -> None:
+    """Start the server, routing host/port the way the installed SDK expects.
+
+    SDK 2.x takes them as ``run()`` keywords; 1.x's ``run()`` accepts only
+    ``transport`` and ``mount_path`` and reads the bind address off the server's
+    settings object. Passing them unconditionally raises TypeError on 1.x.
+    """
+    if transport == "stdio":
+        server.run(transport="stdio")
+        return
+
+    accepted = _supported(type(server).run, {"host": host, "port": port})
+    if not accepted:
+        settings = getattr(server, "settings", None)
+        for attribute, value in (("host", host), ("port", port)):
+            if settings is not None and hasattr(settings, attribute):
+                setattr(settings, attribute, value)
+    server.run(transport=transport, **accepted)

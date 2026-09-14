@@ -123,9 +123,15 @@ def resolve_series(
     Returns the values and a short human-readable description of where they came
     from, which tools echo back so the agent can confirm it used the right input.
     """
+    # Treat a blank string as absent, then dispatch on the same normalised values
+    # the guard counted - otherwise file_path="" passes the count and then fails
+    # downstream with a confusing "Empty path".
+    file_path = file_path.strip() or None if isinstance(file_path, str) else file_path
+    artifact_id = artifact_id.strip() or None if isinstance(artifact_id, str) else artifact_id
+
     provided = [name for name, val in
                 (("values", values), ("file_path", file_path), ("artifact_id", artifact_id))
-                if val is not None and (not isinstance(val, str) or val.strip())]
+                if val is not None]
     if len(provided) != 1:
         raise ActsimToolError(
             f"Provide exactly one data source; got {len(provided)} ({', '.join(provided) or 'none'}).",

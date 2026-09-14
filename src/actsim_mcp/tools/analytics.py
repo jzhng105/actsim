@@ -30,7 +30,19 @@ def _loss_vector(
     values: list[float] | None, file_path: str | None, artifact_id: str | None, column: str | None
 ) -> tuple[np.ndarray, str]:
     """Resolve a loss vector, preferring a simulation artifact's aggregate column."""
-    if artifact_id:
+    if artifact_id and artifact_id.strip():
+        # Check exclusivity before the shortcut, so a conflicting values= or
+        # file_path= is rejected rather than silently ignored.
+        conflicting = [
+            name
+            for name, value in (("values", values), ("file_path", file_path))
+            if value is not None and (not isinstance(value, str) or value.strip())
+        ]
+        if conflicting:
+            raise ActsimToolError(
+                f"artifact_id was given together with {' and '.join(conflicting)}.",
+                hint="Provide exactly one data source.",
+            )
         artifact = STORE.get(artifact_id)
         if artifact.kind in ("simulation", "portfolio"):
             aggregate = np.asarray(artifact.payload["aggregate"], dtype=float)

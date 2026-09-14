@@ -35,8 +35,31 @@ _METRIC_DIRECTION = {
     "bic": "lower is better (penalises parameters more than AIC)",
     "chisquare": "lower is better (binned goodness of fit)",
     "ks": "lower is better (max CDF gap, 0-1)",
-    "log_likelihood": "selected as the minimum, so it ranks WORST-first - use aic or bic to choose a model",
+    "log_likelihood": "higher is better (no penalty for extra parameters - prefer aic or bic to choose between models)",
 }
+
+# Every other metric is minimised. actsim's own select_best_fit takes the min of
+# whatever metric it is given, which picks the WORST model for log-likelihood, so
+# ranking and selection are done here instead of trusting fitter.best_fits.
+_MAXIMISED_METRICS = frozenset({"log_likelihood"})
+
+
+def _rank(frame: pd.DataFrame, metric: str) -> pd.DataFrame:
+    """Order candidates best-first for the given metric."""
+    return frame.sort_values(metric, ascending=metric not in _MAXIMISED_METRICS).reset_index(drop=True)
+
+
+def _best_name(frame: pd.DataFrame, metric: str) -> str | None:
+    """Name of the best candidate on a metric, ignoring degenerate fits.
+
+    A failed optimisation can still land in the results with a log-likelihood of
+    -inf and an AIC of +inf. Those rows are kept in the reported table so the
+    failure is visible, but they must never be selected.
+    """
+    finite = frame[np.isfinite(frame[metric])]
+    if finite.empty:
+        return None
+    return str(_rank(finite, metric).iloc[0]["name"])
 
 
 def _validate_metrics(metrics: list[str] | None) -> list[str]:
@@ -171,8 +194,6 @@ def register(server) -> None:
                     q_high=q_high,
                 )
             fitter.fit()
-            if rank_by in fitter.best_fits:
-                fitter.select_distribution(fitter.best_fits[rank_by]["name"])
 
         frame = _fit_frame(fitter)
         if frame.empty:
@@ -184,9 +205,20 @@ def register(server) -> None:
                     f"Fitter output: {noise.getvalue().strip()[:400]}"
                 ),
             )
-        ascending = True  # every metric here is minimised by select_best_fit
-        frame = frame.sort_values(rank_by, ascending=ascending).reset_index(drop=True)
+        frame = _rank(frame, rank_by)
         failed = sorted(set(candidates) - set(frame["name"]))
+
+        best = _best_name(frame, rank_by)
+        if best is None:
+            raise ActsimToolError(
+                f"Every candidate produced a non-finite {rank_by}, so none can be selected.",
+                hint=(
+                    "The optimiser failed on all of them - check the data against each "
+                    "distribution's support, or try a different candidate list."
+                ),
+            )
+        with captured():
+            fitter.select_distribution(best)
 
         fitted_count = int(np.asarray(fitter.data).size)
         artifact = STORE.put(
@@ -255,10 +287,11 @@ def register(server) -> None:
         Returns: the ranked candidate table and the currently selected distribution.
         """
         artifact, fitter = _get_fitter(artifact_id)
-        frame = _fit_frame(fitter).sort_values(rank_by).reset_index(drop=True)
+        frame = _rank(_fit_frame(fitter), rank_by)
         best_by = {
-            metric: fitter.best_fits[metric]["name"]
-            for metric in fitter.best_fits
+            metric: _best_name(frame, metric)
+            for metric in FIT_METRICS
+            if metric in frame.columns
         }
         payload = {
             "artifact_id": artifact_id,

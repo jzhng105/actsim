@@ -264,9 +264,15 @@ The server routes around each one rather than surfacing the failure:
 4. `gen_agg_simulations` loops in Python, so runtime grows linearly with
    `num_simulations`; 10,000 trials is a good default and large runs should be
    asked for explicitly.
-5. Years in which every event falls below the deductible are dropped by a plain
-   groupby over event data. `actsim_apply_layer` reinstates them as zeros so
-   aggregate means are not biased upwards.
+5. Event-level data only has rows for years that produced a claim. A plain
+   groupby over it therefore drops claim-free years, and every per-year statistic
+   built that way is biased. `actsim_apply_layer` reinstates those years as
+   zeros, and OEP is computed over all simulated years rather than only the ones
+   with events - on a poisson(0.5) book that difference nearly doubles OEP(90%).
+6. `DistributionFitter.select_best_fit` takes the *minimum* of whatever metric it
+   is given, which selects the worst model when ranking by log-likelihood. The
+   server ranks and selects on its own, maximising log-likelihood and minimising
+   the rest, and never selects a candidate whose metric came back non-finite.
 
 ---
 

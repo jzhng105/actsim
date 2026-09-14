@@ -70,10 +70,9 @@ def main(argv: list[str] | None = None) -> int:
         f"(workspace: {SETTINGS.workspace})",
         file=sys.stderr,
     )
-    if args.transport == "stdio":
-        server.run(transport="stdio")
-    else:
-        server.run(transport=args.transport, host=args.host, port=args.port)
+    from .compat import run_server
+
+    run_server(server, args.transport, host=args.host, port=args.port)
     return 0
 
 

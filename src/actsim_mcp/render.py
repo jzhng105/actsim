@@ -23,6 +23,17 @@ class ResponseFormat(str, Enum):
     JSON = "json"
 
 
+def _trivial_index(index: pd.Index) -> bool:
+    """True when an index is a plain unnamed 0..n-1 range and carries no meaning."""
+    return (
+        index.name is None
+        and index.nlevels == 1
+        and isinstance(index, pd.RangeIndex)
+        and index.start == 0
+        and index.step == 1
+    )
+
+
 def jsonable(value: Any) -> Any:
     """Recursively convert numpy/pandas objects into JSON-serialisable types."""
     if isinstance(value, (np.integer,)):
@@ -39,7 +50,11 @@ def jsonable(value: Any) -> Any:
     if isinstance(value, pd.Timestamp):
         return value.isoformat()
     if isinstance(value, pd.DataFrame):
-        return [jsonable(row) for row in value.reset_index(drop=True).to_dict("records")]
+        # A named or non-default index carries meaning - the quantile a risk row
+        # belongs to, the accident year of a triangle row - so keep it as a column
+        # rather than dropping it and returning unlabelled numbers.
+        frame = value if _trivial_index(value.index) else value.reset_index()
+        return [jsonable(row) for row in frame.to_dict("records")]
     if isinstance(value, pd.Series):
         return [jsonable(v) for v in value.tolist()]
     if isinstance(value, Mapping):
@@ -83,12 +98,21 @@ def table(frame: pd.DataFrame, *, digits: int = 2, index: bool = True) -> str:
         "| " + " | ".join(str(h) for h in header) + " |",
         "| " + " | ".join("---" for _ in header) + " |",
     ]
+    # Integer columns hold identifiers and counts - accident years, trial numbers,
+    # development months - which read wrong with thousands separators ("2,024").
+    plain = [
+        pd.api.types.is_integer_dtype(display[column]) or pd.api.types.is_object_dtype(display[column])
+        for column in display.columns
+    ]
     for row in display.itertuples(index=False):
-        cells = [
-            number(v, digits) if isinstance(v, (int, float, np.number)) and not isinstance(v, bool)
-            else str(v)
-            for v in row
-        ]
+        cells = []
+        for value, as_is in zip(row, plain):
+            if isinstance(value, bool) or not isinstance(value, (int, float, np.number)):
+                cells.append(str(value))
+            elif as_is:
+                cells.append(f"{int(value)}")
+            else:
+                cells.append(number(value, digits))
         lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines)
 

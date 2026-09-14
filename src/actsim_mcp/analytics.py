@@ -74,6 +74,24 @@ def moments(values: np.ndarray) -> dict[str, float]:
     }
 
 
+def largest_event_per_year(aggregate: np.ndarray, events: pd.DataFrame) -> np.ndarray:
+    """Largest single event in each simulated year, including years with none.
+
+    The event table only has rows for years that produced a claim, so grouping it
+    alone silently drops every claim-free year. For a low-frequency book that is
+    most of the sample and it inflates OEP badly - at poisson(0.5) over 20,000
+    trials, OEP(90%) came out near double its true value. The aggregate vector has
+    exactly one entry per simulated year, so its length is the true year count.
+    """
+    years = np.asarray(aggregate, dtype=float).size
+    per_year = np.zeros(years, dtype=float)
+    grouped = events.groupby("year")["amount"].max()
+    index = grouped.index.to_numpy(dtype=int) - 1  # actsim numbers years from 1
+    inside = (index >= 0) & (index < years)
+    per_year[index[inside]] = grouped.to_numpy(dtype=float)[inside]
+    return per_year
+
+
 def risk_table(
     aggregate: np.ndarray,
     quantiles: Sequence[float],
@@ -94,9 +112,9 @@ def risk_table(
         rows["AEP"].append(var(aggregate, q))
 
     if events is not None and not events.empty and "amount" in events.columns:
-        yearly_max = np.sort(events.groupby("year")["amount"].max().to_numpy(float))
-        rows["OEP"] = [float(np.quantile(yearly_max, q)) for q in quantiles]
-        rows["OEP_TVaR"] = [tvar(yearly_max, q) for q in quantiles]
+        per_year = largest_event_per_year(aggregate, events)
+        rows["OEP"] = [var(per_year, q) for q in quantiles]
+        rows["OEP_TVaR"] = [tvar(per_year, q) for q in quantiles]
 
     table = pd.DataFrame(rows, index=[f"{q:g}" for q in quantiles])
     table.index.name = "quantile"
