@@ -3,7 +3,24 @@ import os
 import warnings
 from typing import Any, Dict
 import time
-import pkg_resources
+
+
+def _default_config_path() -> str:
+    """Locate the packaged config.yaml.
+
+    Prefers importlib.resources, which is the supported API on Python 3.9+ and
+    the only one that works on setuptools 81+, where pkg_resources was removed.
+    Falls back to pkg_resources for older interpreters that lack files().
+    """
+    try:
+        from importlib.resources import files
+
+        return str(files("actsim").joinpath("config.yaml"))
+    except (ImportError, AttributeError, ModuleNotFoundError):
+        import pkg_resources  # type: ignore[import-untyped]
+
+        return pkg_resources.resource_filename("actsim", "config.yaml")
+
 
 class Config:
     def __init__(self, file_path: str = None):
@@ -17,7 +34,7 @@ class Config:
         if file_path is None:
             # Use the default config file from the package
             try:
-                file_path = pkg_resources.resource_filename('actsim', 'config.yaml')
+                file_path = _default_config_path()
             except Exception as e:
                 warnings.warn(f"Could not find default config file: {e}")
                 file_path = "config.yaml"  # Fallback to local file
